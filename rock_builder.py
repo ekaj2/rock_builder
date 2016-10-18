@@ -36,9 +36,9 @@ import bmesh
 
 
 # UI
-class RockGeneratorPanel(Panel):
-    bl_label = "Rock Generator"
-    bl_idname = "3D_VIEW_PT_layout_RockGenerator"
+class RockBuilderPanel(Panel):
+    bl_label = "Rock Builder"
+    bl_idname = "3D_VIEW_PT_layout_RockBuilder"
     bl_space_type = 'VIEW_3D'
     bl_region_type = 'TOOLS'
     bl_context = "objectmode"
@@ -52,7 +52,7 @@ class RockGeneratorPanel(Panel):
         # Generate Maze button
         row = layout.row()
         row.scale_y = 1.5
-        row.operator("rock_gen.generate_rock", icon="MOD_BUILD")
+        row.operator("rock_gen.generate_rock", icon="SCULPTMODE_HLT")
         row = layout.row()
         row.scale_y = 1.5
         row.operator("rock_gen.update_rock", icon="FILE_REFRESH")
@@ -136,8 +136,7 @@ def build_rock(context):
     scene = context.scene
     rock = scene.rock_gen_props
     ops = bpy.ops
-    data = bpy.data
-    
+
     #########################################################################
     ##                         BASE MESH MODELING                          ##
     #########################################################################
@@ -145,6 +144,7 @@ def build_rock(context):
     # add a new ico-sphere
     ops.mesh.primitive_ico_sphere_add(subdivisions=2, size=1)
     active()["ROCK_GENERATOR"] = True
+    active().name = "Rock"
 
     # shade smooth
     ops.object.shade_smooth()
@@ -211,7 +211,8 @@ def build_rock(context):
     mod.strength = rock.small_displace_amount
     mod.show_expanded = False
 
-class RockGeneratorOperator(Operator):
+
+class RockBuilderOperator(Operator):
     bl_label = "Generate Rock"
     bl_idname = "rock_gen.generate_rock"
     bl_description = "Generates a rock using a method described by Zacharias Reinhardt's tutorial:\nhttp://www.blendernation.com/2016/10/16/create-realistic-looking-rocks-blender/"
@@ -223,7 +224,7 @@ class RockGeneratorOperator(Operator):
         return {'FINISHED'}
 
 
-class RockGeneratorUpdate(Operator):
+class RockBuilderUpdate(Operator):
     bl_label = "Update Rock"
     bl_idname = "rock_gen.update_rock"
     bl_description = "Updates selected rock"
@@ -231,7 +232,6 @@ class RockGeneratorUpdate(Operator):
 
     def execute(self, context):
         selected_rock = active()
-        is_rock = False
         try:
             is_rock = selected_rock.get('ROCK_GENERATOR')
         except KeyError:
@@ -263,13 +263,16 @@ class RockGeneratorProperties(PropertyGroup):
     elongation = FloatProperty(name="Elongation", default=1.25)
 
 
-classes = (RockGeneratorPanel, RockGeneratorOperator, RockGeneratorUpdate, RockGeneratorProperties)
+classes = (RockBuilderPanel, RockBuilderOperator, RockBuilderUpdate, RockGeneratorProperties)
+
+
 def register():
     for c in classes:
         register_class(c)
     
     Scene.rock_gen_props = PointerProperty(type=RockGeneratorProperties)
-    
+
+
 def unregister():
     for c in classes:
         unregister_class(c)
