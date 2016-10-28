@@ -15,6 +15,15 @@
 #
 # ### END GPL LICENSE BLOCK ###
 
+from random import random, uniform
+import math
+
+import bpy
+from bpy.props import IntProperty, FloatProperty, PointerProperty, BoolProperty
+from bpy.types import Scene, Panel, Operator, PropertyGroup
+from bpy.utils import register_class, unregister_class
+import bmesh
+
 bl_info = {
     "name": "Rock Builder",
     "author": "Jake Dube",
@@ -25,14 +34,6 @@ bl_info = {
     "wiki_url": "",
     "category": "Add Mesh",
 }
-
-from random import random
-
-import bpy
-from bpy.props import IntProperty, FloatProperty, PointerProperty
-from bpy.types import Scene, Panel, Operator, PropertyGroup
-from bpy.utils import register_class, unregister_class
-import bmesh
 
 
 # UI
@@ -49,7 +50,6 @@ class RockBuilderPanel(Panel):
         layout = self.layout
         rock = scene.rock_gen_props
 
-        # Generate Maze button
         row = layout.row()
         row.scale_y = 1.5
         row.operator("rock_gen.generate_rock", icon="SCULPTMODE_HLT")
@@ -59,9 +59,14 @@ class RockBuilderPanel(Panel):
         
         box = layout.box()
         box.label("Mesh Settings")
+        box.prop(rock, "num_rocks")
+        box.prop(rock, "spacing")
         box.prop(rock, "random_variation")
-        box.prop(rock, "elongation")
-        
+
+        row = box.row(align=True)
+        row.prop(rock, "min_elongation")
+        row.prop(rock, "max_elongation")
+
         box = layout.box()
         box.label("Subsurf and Bevel Settings")
         box.prop(rock, "viewport_subsurf")
@@ -70,10 +75,19 @@ class RockBuilderPanel(Panel):
         
         box = layout.box()
         box.label("Displacement Settings")
-        box.prop(rock, "displace_amount")
+
+        row = box.row(align=True)
+        row.prop(rock, "min_displace_amount")
+        row.prop(rock, "max_displace_amount")
+
         box.prop(rock, "small_displace_amount")
-        box.prop(rock, "texture_size")
+
+        row = box.row(align=True)
+        row.prop(rock, "min_texture_size")
+        row.prop(rock, "max_texture_size")
+
         box.prop(rock, "small_texture_size")
+        box.prop(rock, "new_texture")
         
 
 def setup_big_texture(text: bpy.types.Texture):
@@ -81,20 +95,21 @@ def setup_big_texture(text: bpy.types.Texture):
     
     text.type = 'CLOUDS'
     text.noise_basis = 'VORONOI_F1'
-    text.noise_scale = rock.texture_size
+    text.noise_scale = uniform(rock.min_texture_size, rock.max_texture_size)
     text.noise_type = 'HARD_NOISE'
 
 
 # ensure big texture
 def displace_big() -> bpy.types.Texture:
     data = bpy.data
-    
-    # look for pre-existing texture
-    for t in data.textures:
-        if t.name == "ROCK_GENERATOR_BIG":
-            # comment this out to not overwrite the settings:
-            setup_big_texture(t)
-            return t
+
+    if not bpy.context.scene.rock_gen_props.new_texture:
+        # look for pre-existing texture
+        for t in data.textures:
+            if t.name == "ROCK_GENERATOR_BIG":
+                # comment this out to not overwrite the settings:
+                setup_big_texture(t)
+                return t
     # build new texture
     text = data.textures.new(name="ROCK_GENERATOR_BIG", type="CLOUDS")
     setup_big_texture(text)
@@ -131,7 +146,7 @@ def active():
     return bpy.context.scene.objects.active
 
 
-def build_rock(context):
+def build_rock(context, loc=bpy.context.scene.cursor_location):
     # convenience variables
     scene = context.scene
     rock = scene.rock_gen_props
@@ -142,7 +157,7 @@ def build_rock(context):
     #########################################################################
 
     # add a new ico-sphere
-    ops.mesh.primitive_ico_sphere_add(subdivisions=2, size=1)
+    ops.mesh.primitive_ico_sphere_add(subdivisions=2, location=loc, size=1)
     active()["ROCK_GENERATOR"] = True
     active().name = "Rock"
 
@@ -153,7 +168,7 @@ def build_rock(context):
     ops.object.mode_set(mode='EDIT')
     bpy.ops.mesh.select_all(action='SELECT')
     bpy.ops.transform.resize(
-        value=(rock.elongation, 1, 1), 
+        value=(uniform(rock.min_elongation, rock.max_elongation), 1, 1),
         constraint_axis=(True, False, False), 
         constraint_orientation='GLOBAL', 
         mirror=False, 
@@ -202,7 +217,7 @@ def build_rock(context):
             mod = active().modifiers.new(name="Displace - {}{}".format(d, v), type='DISPLACE')
             mod.texture = displace_big()
             mod.direction = d
-            mod.strength = v * rock.displace_amount
+            mod.strength = v * uniform(rock.min_displace_amount, rock.max_displace_amount)
             mod.show_expanded = False
 
     # configure small displacement modifier
@@ -219,7 +234,19 @@ class RockBuilderOperator(Operator):
     bl_options = {'REGISTER', 'UNDO'}
 
     def execute(self, context):
-        build_rock(context)
+        scene = context.scene
+        num_rocks = scene.rock_gen_props.num_rocks
+        start_location = scene.cursor_location
+        space = scene.rock_gen_props.spacing
+        i = 0
+        j = 0
+        while i < num_rocks:
+            for k in range(int(math.sqrt(num_rocks))):
+                if i >= num_rocks:
+                    break
+                build_rock(context, (start_location.x + (k * space), start_location.y + (j * space), start_location.z))
+                i += 1
+            j += 1
         
         return {'FINISHED'}
 
@@ -227,7 +254,7 @@ class RockBuilderOperator(Operator):
 class RockBuilderUpdate(Operator):
     bl_label = "Update Rock"
     bl_idname = "rock_gen.update_rock"
-    bl_description = "Updates selected rock"
+    bl_description = "Updates active rock"
     bl_options = {'REGISTER', 'UNDO'}
 
     def execute(self, context):
@@ -240,27 +267,43 @@ class RockBuilderUpdate(Operator):
         if not is_rock:
             self.report({'ERROR'}, "No active rock object!")
             return {'CANCELLED'}
-        
+
+        # get the original transform
+        orig_loc = selected_rock.location
+
         for s in context.selected_objects:
             s.select = False
         selected_rock.select = True
         bpy.ops.object.delete(use_global=False)
         
-        build_rock(context)
+        build_rock(context, loc=orig_loc)
         
         return {'FINISHED'}
 
 
 class RockGeneratorProperties(PropertyGroup):
-    viewport_subsurf = IntProperty(name="Viewport Subdivisions", default=4)
-    render_subsurf = IntProperty(name="Render Subdivisions", default=5)
-    random_variation = FloatProperty(name="Random Variation", default=0.5)
-    bevel_width = FloatProperty(name="Bevel Width", default=0.025)
-    displace_amount = FloatProperty(name="Displace Amount", default=0.5)
-    small_displace_amount = FloatProperty(name="Small Displace Amount", default=0.025)
-    texture_size = FloatProperty(name="Texture Size", default=1.5)
-    small_texture_size = FloatProperty(name="Small Texture Size", default=1.5)
-    elongation = FloatProperty(name="Elongation", default=1.25)
+    viewport_subsurf = IntProperty(name="Viewport Subdivisions", default=4, min=0, soft_max=6, max=10)
+    render_subsurf = IntProperty(name="Render Subdivisions", default=5, min=0, soft_max=6, max=10)
+    random_variation = FloatProperty(name="Random Variation", default=0.5, min=0)
+    bevel_width = FloatProperty(name="Bevel Width", default=0.025, min=0)
+    small_displace_amount = FloatProperty(name="Small Displace Amount", default=0.025, min=0)
+    small_texture_size = FloatProperty(name="Small Texture Size", default=1.5, min=0)
+
+    # new batch props
+    num_rocks = IntProperty(name="Number", default=10, min=0, max=1000)
+
+    min_elongation = FloatProperty(name="Min Elongation", default=1, min=0)
+    max_elongation = FloatProperty(name="Max Elongation", default=1.5, min=0)
+
+    min_texture_size = FloatProperty(name="Min Texture Size", default=1.25, min=0)
+    max_texture_size = FloatProperty(name="Max Texture Size", default=1.75, min=0)
+
+    min_displace_amount = FloatProperty(name="Min Displace Amount", default=0.25, min=0)
+    max_displace_amount = FloatProperty(name="Max Displace Amount", default=0.75, min=0)
+
+    new_texture = BoolProperty(name="New Texture", default=True)
+
+    spacing = FloatProperty(name="Spacing", default=3, min=0, max=100)
 
 
 classes = (RockBuilderPanel, RockBuilderOperator, RockBuilderUpdate, RockGeneratorProperties)
