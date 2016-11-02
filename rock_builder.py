@@ -146,7 +146,10 @@ def active():
     return bpy.context.scene.objects.active
 
 
-def build_rock(context, loc=bpy.context.scene.cursor_location):
+def build_rock(context, loc=""):
+    if not loc:
+        loc = bpy.context.scene.cursor_location
+
     # convenience variables
     scene = context.scene
     rock = scene.rock_gen_props
